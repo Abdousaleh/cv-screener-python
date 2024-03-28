@@ -8,7 +8,7 @@ import constants as cs
 import spacy
 from spacy.matcher import Matcher
 nlp = spacy.load("en_core_web_lg")
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, Query, Request
 
 app = FastAPI(
     title="CV Screener",
@@ -44,13 +44,13 @@ def extract_name(text):
     else:
         return None
 
-@app.get('/cv_reader/{path:path}')
+@app.get('/cv_reader/')
 # async def get_path(path:str):
 #     # path = os.getcwd()+path
 #     file = open(path, 'r')
 #     file_extension=file.name.split('.')[-1]
 #     return {"path": path, 'file_extension':file_extension}
-async def cv_reader(path: str):
+async def cv_reader(path: str = Query(..., alias="path", description="Path to the CV")):
         inputfile = open(path, 'rb')
         file_extension=inputfile.name.split('.')[-1]
         if file_extension == 'pdf' or path.split('.')[-1] == 'docx':
