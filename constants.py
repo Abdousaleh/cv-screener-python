@@ -1,7 +1,18 @@
 from nltk.corpus import stopwords
+import spacy
+from spacy.matcher import Matcher
 import re
+
+from main import matcher_patterns
+
 # Omkar Pathak
 NAME_PATTERN = [{'POS': 'PROPN', 'ent_type': 'PERSON'}, {'TAG': 'NNP', 'ent_type': 'PERSON'}]
+
+Job_pattern = [
+    {"POS": "PROPN", "OP": "?", "ENT_TYPE": "PERSON"},  # Optional proper noun before job title
+    {"POS": "NOUN", "OP": "+"},   # One or more nouns for job title
+    {"POS": "PROPN", "OP": "?"}, # Optional proper noun after job title
+  ]
 
 # Education (Upper Case Mandatory)
 EDUCATION = [

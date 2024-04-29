@@ -1,14 +1,28 @@
 import re
-import os
-from flask import request
+
 import PyPDF2
 import docx2txt
-from models import resume
-import constants as cs
 import spacy
 from spacy.matcher import Matcher
+
+import constants as cs
+
+from collections import Counter
+
 nlp = spacy.load("en_core_web_lg")
-from fastapi import FastAPI, Query, Request
+from fastapi import FastAPI, Query
+import nltk
+import warnings
+from pyresparser import ResumeParser
+
+# Install nltk Dependencies
+nltk.download('maxent_ne_chunker')
+nltk.download('words')
+nltk.download('stopwords')
+nltk.download('punkt')
+nltk.download('wordnet')
+nltk.download('averaged_perceptron_tagger')
+
 
 app = FastAPI(
     title="CV Screener",
@@ -16,6 +30,19 @@ app = FastAPI(
     version="1.0.0")
 
 global inputfile
+matcher = Matcher(nlp.vocab)
+# Read patterns from file
+with open('job-pattern.txt', 'r') as file:
+    matcher_patterns = [line.strip() for line in file]
+
+jobmatcher = Matcher(nlp.vocab)
+for pattern in matcher_patterns:
+    jobmatcher.add("jobtitle", [[
+        {"POS": "PROPN", "OP": "?"},  # Optional proper noun before pattern
+        {"LOWER": pattern.lower()},  # The original pattern
+        {"POS": "PROPN", "OP": "?"}  # Optional proper noun after pattern
+    ]])
+
 @app.get('/')
 async def index():
     return {"message": "Hello World"}
@@ -36,6 +63,21 @@ def extract_name_Spacy(extracted_text, matcher):
         span = extracted_text[start:end]
         if 'name' not in span.text.lower():
             return span.text
+
+
+def extract_job_titles(text):
+
+    doc = nlp(text)
+    matches = jobmatcher(doc)
+    job_titles = []
+    for match_id, start, end in matches:
+        job_title = doc[start:end].text
+        job_titles.append(job_title)
+    if len(job_titles) == 0:
+        return None
+    else:
+        designation = job_titles[0]
+    return designation
 def extract_name(text):
     pattern = r'([A-Z][a-z]+)\s([A-Z][a-z]+)'
     match = re.search(pattern, text)
@@ -44,20 +86,31 @@ def extract_name(text):
     else:
         return None
 
+def cv_matcher(txtin, text):
+    rekwl = []
+
+    for j in text:
+        for i in txtin:
+            if j == i:
+                rekwl.append(j)
+
+    if not rekwl:
+        return 'Not Found'
+    else:
+        kmcount = dict(Counter(rekwl))
+        skill_matcher = list(kmcount.items())
+        return skill_matcher
 @app.get('/cv_reader/')
-# async def get_path(path:str):
-#     # path = os.getcwd()+path
-#     file = open(path, 'r')
-#     file_extension=file.name.split('.')[-1]
-#     return {"path": path, 'file_extension':file_extension}
-async def cv_reader(path: str = Query(..., alias="path", description="Path to the CV")):
+
+async def cv_reader(path: str = Query(..., alias="path", description="Path to the CV"), txtin: list = Query(default=[],optional=True, alias="txtin", description="Input text")):
         inputfile = open(path, 'rb')
         file_extension=inputfile.name.split('.')[-1]
         if file_extension == 'pdf' or path.split('.')[-1] == 'docx':
             pdftext=[]
             pdftextphone= []
+
             # creating a pdf file object
-            # inputfile = open(path, 'r')
+
             file_extension = str(inputfile.name).split(".")[-1]
             file_name = str(inputfile.name).split("\\")[-1]
             if file_extension == "pdf":
@@ -96,19 +149,43 @@ async def cv_reader(path: str = Query(..., alias="path", description="Path to th
                     result2 = set(map(tuple,pdftextphone))
 
                 # Extracting name using Regex
-                # name= extract_name(str(txt2))
                 matcher = Matcher(nlp.vocab)
                 pattern = [cs.NAME_PATTERN]
                 matcher.add('NAME', patterns=pattern)
                 Name_Spacy = nlp(str(txt2))
                 name = extract_name_Spacy(Name_Spacy, matcher)
-                # name = str(txt2)
 
+                #Extracting designation
 
+                designation = extract_job_titles(str(txt2))
 
+                ##### getting skills via pyresparser
+                # Ignore any user warnings during parsing
+                warnings.filterwarnings("ignore", category=UserWarning)
+
+                # Set the path to the PDF file
+                resume_path = path
+
+                # Create a ResumeParser object
+                parser = ResumeParser(resume_path)
+
+                # Extract the parsed data
+                data = parser.get_extracted_data()
+                skills = data['skills']
+                # designation=data['designation']
+
+                # skills matcher
+                stxt=str(txt2)
+                mtxt = re.sub('[^A-Za-z0-9]+', ' ', stxt)
+                splits = mtxt.split()
+                splits = [x.lower() for x in splits]
+                txtin = [x.lower() for x in txtin]
+                skill_matcher=cv_matcher(txtin, splits)
+            ############################################################################
             # Working on Docx files
             elif file_extension == "docx":
                 Docx_reader = docx2txt.process(inputfile)
+
                 # Extracting Emails from DOCx
                 for word in Docx_reader:
 
@@ -144,14 +221,34 @@ async def cv_reader(path: str = Query(..., alias="path", description="Path to th
                 result = set(map(tuple, pdftext))
                 result2 = set(map(tuple, pdftextphone))
 
-                # name = (re.findall(r'([A-Z][a-z]+)\s([A-Z][a-z]+)',str(Docx_reader)))[0]
-                # name = str(Docx_reader)
+                # Extract designation
+
+                designation = extract_job_titles(Docx_reader)
+                # getting skills via pyresparser
+                # Ignore any user warnings during parsing
+                warnings.filterwarnings("ignore", category=UserWarning)
+
+                # Set the path to the PDF file
+                resume_path = path
+
+                # Create a ResumeParser object
+                parser = ResumeParser(resume_path)
+
+                # Extract the parsed data
+                data = parser.get_extracted_data()
+                skills = data['skills']
+
+                # CV_Skills_matcher
+                stxt = str(Docx_reader)
+                mtxt = re.sub('[^A-Za-z0-9]+', ' ', stxt)
+                splits = mtxt.split()
+                splits = [x.lower() for x in splits]
+                txtin = [x.lower() for x in txtin]
+                skill_matcher = cv_matcher(txtin, splits)
             else:
                 raise ValueError("Unsupported file format. Only PDF and DOCX files are supported.")
 
-
-            # resume(name=name, email=str(result), phone=list(result2), skills=None, file_name=file_name)
-            return {'name': name, 'email':result, 'phone': result2, 'skills': None, 'file_name': file_name}
+            return {'name': name, 'email':result, 'phone': result2, 'skills': skills, 'file_name': file_name, 'designation': designation, 'skill_matcher': skill_matcher}
 
         else:
             return None
